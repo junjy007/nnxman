@@ -1,2 +1,9 @@
 *
 !.gitignore
+!*.py
+!*.sh
+!README
+
+# Datasets come with this repo
+!kitti_road_segment/
+!vgg_pretrained

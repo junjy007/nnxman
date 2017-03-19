@@ -1,0 +1,16 @@
+KITTI road segmentation dataset should come here.
+
+The data is available at 
+  http://www.cvlibs.net/download.php?file=data_road.zip
+
+After unpacking, you should have a directory structure as follows:
+
+── testing
+│   ├── calib
+│   └── image_2
+└── training
+    ├── calib
+    ├── gt_image_2
+    └── image_2
+
+
