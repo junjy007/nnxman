@@ -1,0 +1,5 @@
+.DS_*
+.idea
+ref
+src_backup*
+*.pyc

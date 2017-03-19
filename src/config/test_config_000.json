@@ -1,0 +1,94 @@
+{
+    "version": {
+        "id": "TestExperiment000",
+        "parent": "",
+        "running_copy": false
+    },
+    "path": {
+        "host": "",
+        "base": "/Users/junli/local/projects/tf-fcn",
+        "data": "DATA/data_road_sml",
+        "run": "RUNS",
+        "this_experiment": "#same-as-id",
+        "checkpoint_dir": "snapshots",
+        "checkpoint_name": "cp_step",
+        "train_summary_dir": "train_log",
+        "valid_summary_dir": "valid_log",
+        "python_mod": [ ]
+    },
+    "model": {
+        "data_source": "src/model/input.py",
+        "encoder": "src/model/encoder.py",
+        "decoder": "src/model/decoder.py",
+        "loss": "src/model/loss.py",
+        "solver": "src/model/solver.py"
+    },
+    "data": {
+        "all_sample_list": "sample-annotation-list.txt",
+        "trn_sample_list": "train.txt",
+        "vld_sample_list": "valid.txt",
+        "image_info": {
+            "height": 375,
+            "width": 1242,
+            "channels": 3,
+            "format": "png"
+        },
+        "num_classes": 2,
+        "class_colours": {
+            "road": [ 255, 0, 255 ],
+            "background": [ 255, 0, 0 ]
+        },
+        "jitter": {},
+        "random_seed": 42
+    },
+    "encoder": {
+        "pre_trained_param": "DATA/vgg_pretrained/vgg16.npy",
+        "channel_means": {
+            "r": 123.68,
+            "g": 116.779,
+            "b": 103.399
+        },
+        "fc_to_conv": {
+            "fc6": {
+                "fc_weight_shape": [ 25088, 4096 ],
+                "conv_kernel_shape": [ 7, 7, 512, 4096 ]
+            },
+            "fc7": {
+                "fc_weight_shape": [ 4096, 4096 ],
+                "conv_kernel_shape": [ 1, 1, 4096, 4096 ]
+            },
+            "fc8": {
+                "fc_weight_shape": [ 4096, 1000 ],
+                "conv_kernel_shape": [ 1, 1, 4096, 1000 ]
+            }
+        }
+    },
+    "objective": {
+        "class_weights": [ 1.0, 1.0 ],
+        "weight_decay": 0.001
+    },
+    "solver": {
+        "optimise_mod": "Adam",
+        "batch_size": 2,
+        "learning_rate": 1e-5,
+        "dropout_rate": 0.5,
+        "max_steps": 12000
+    },
+    "checkpoint": {
+        "max_to_keep": 5,
+        "keep_every_n_hours": 12,
+        "save_every_n_steps": 1,
+        "summary_every_n_steps": 1
+    },
+    "debug": {
+        "load_weights": false,
+        "input": true,
+        "conv": true,
+        "fc": true,
+        "up": true,
+        "load_conv_weights": true,
+        "load_conv_bias": true,
+        "elem_loss": true,
+        "mean_loss": true
+    }
+}

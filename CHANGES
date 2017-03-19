@@ -1,0 +1,14 @@
+==== TODO ==== (oldest on top)
+** 18 Mar 2017 weight decay loss
+  study "collection" in tensorflow and make weight decay work
+
+** 18 Mar 2017 evaluate model
+  Evaluate the model by loading checkpoints and check the performance
+  on validation data. 
+
++ 19 Mar 2017 "main" script organisation
+  setup_test.py belongs to experiment-management in general sense. 
+  Anyway, it should be moved out of source-root. So is train_and_evaluate.py
+
+==== DONE ==== (latest on top)
+

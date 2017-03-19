@@ -1,0 +1,4 @@
+A framework of organising experiments for tasks such as detecting traffic
+elements in camera images, image segmentation, etc.
+
+See src/experiment_manage/core.py for the interfaces defined in the framework.
