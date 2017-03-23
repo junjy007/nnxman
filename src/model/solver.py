@@ -3,8 +3,8 @@ from experiment_manage.core import Builder, BuilderFactory
 
 
 class TrainBuilder(Builder):
-    def __init__(self, conf, phrase):
-        super(TrainBuilder, self).__init__(conf, phrase)
+    def __init__(self, conf):
+        super(TrainBuilder, self).__init__(conf)
         self.conf = conf
         self.learning_rate = self.get_learning_rate()
         self.optim = None
@@ -31,7 +31,8 @@ class TrainBuilder(Builder):
                 name='GradDescent')
         return optim
 
-    def build(self, inputs):
+    def build(self, inputs, phrase):
+        assert phrase == 'train'
         loss = inputs[0]
         with tf.control_dependencies([loss, ]):
             self.optim = self.get_optimiser()
@@ -45,8 +46,8 @@ class TrainBuilderFactory(BuilderFactory):
     def __init__(self):
         super(TrainBuilderFactory, self).__init__()
 
-    def get_builder(self, conf, phrase):
-        return TrainBuilder(conf, phrase)
+    def get_builder(self, conf):
+        return TrainBuilder(conf)
 
 
 def id_str():

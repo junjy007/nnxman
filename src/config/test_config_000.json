@@ -12,8 +12,10 @@
         "this_experiment": "#same-as-id",
         "checkpoint_dir": "snapshots",
         "checkpoint_name": "cp_step",
+        "valid_record": "valid_rec.txt",
         "train_summary_dir": "train_log",
         "valid_summary_dir": "valid_log",
+        "deploy_summary_dir": "deploy_log",
         "python_mod": [ ]
     },
     "model": {

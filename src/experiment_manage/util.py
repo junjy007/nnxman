@@ -59,9 +59,55 @@ def get_experiment_running_dir(path_setting, exp_id):
     if d_ == '#same-as-id':
         d_ = exp_id
 
-    if len(d_)>0 and d_ != '#none':
+    if len(d_) > 0 and d_ != '#none':
         run_dir = os.path.join(d0_, d_)
     else:
         run_dir = d0_
 
     return run_dir
+
+
+class CheckpointEvaluationRecord(object):
+    """
+    Given a checkpoint dir, this object maintains which checkpoints
+    have been evaluated and which ones havn't
+
+    """
+
+    def __init__(self, cp_dir, cp_name, eval_rec_file):
+        """
+        :param cp_dir: checkpoint dir
+        :param cp_name: checkpoint filename, the check points are
+          cp_dir/cp_name-1.XXX
+          cp_dir/cp_name-2.XXX
+
+        :param eval_rec_file: file name of evaluation results, in the directory @cp_dir
+          each line of the file is
+          /full/path/to/checkpoint/file <losses>
+          So the checkpoint path is the string before the first space
+        """
+        self.eval_rec_path = os.path.join(cp_dir, eval_rec_file)
+        self.cp_name = cp_name
+        self.cp_dir = cp_dir
+
+    def get_to_eval_checkpoint_paths(self):
+        files = os.listdir(self.cp_dir)
+        cp_s = list(set([os.path.splitext(f)[0]
+                         for f in files
+                         if f.startswith(self.cp_name)]))
+        maybe_to_eval = [os.path.join(self.cp_dir, f) for f in cp_s]
+
+        eval_done = []
+        if os.path.exists(self.eval_rec_path):
+            with open(self.eval_rec_path, 'r') as f:
+                for l in f:
+                    eval_done.append(l.split(' ')[0])
+
+        to_eval = [p for p in maybe_to_eval if p not in eval_done]
+
+        for p in to_eval:
+            yield p
+
+    def record_checkpoint_eval_result(self, cp_path, result):
+        with open(self.eval_rec_path, 'a') as f:
+            f.write("{} {}\n".format(cp_path, result))

@@ -7,12 +7,13 @@ However, you can also test this script directly as
 follows.
 
 Usage:
-  input.py <config-file> [--project-dir=<pdir>]
+  input.py <config-file> [--project-dir=<pdir>] [--split=<sp>]
 
 Options
-  --project-dir=<pdir> Overriding the base-path in environmental variable
+  --project-dir=<pdir>  Overriding the base-path in environmental variable
     $PROJECT_DIR, from which the relative pathes in the experiment configuration
     are constructed.
+  --split=<sp>  Which data split to try can be training or validation [default: training]
 
 This module provide a portal function @build_inputs, that returns the input nodes
 for a computational graph of image segmentation. See the function documentation.
@@ -26,7 +27,7 @@ from tensorflow.python.framework import dtypes
 import os
 import logging
 import json
-from experiment_manage.util import build_print_shape, test_run
+from experiment_manage.util import build_print_shape, build_print_value, test_run
 from experiment_manage.core import Builder, BuilderFactory
 
 
@@ -98,7 +99,7 @@ class MyImageProcessor(object):
         delegated to @build_input_image_process
         """
         im1 = self.build_image_process(raw_im)
-        lb1 = self._build_interpret_label(
+        lb1 = self.build_interpret_label(
             self.build_image_process(raw_lb, keep_value=True))
 
         im = tf.expand_dims(im1, 0)
@@ -107,7 +108,7 @@ class MyImageProcessor(object):
         lb.set_shape([1, self.raw_im_height, self.raw_im_width, self.num_classes])
         return im, lb
 
-    def _build_interpret_label(self, label_im):
+    def build_interpret_label(self, label_im):
         """
         For each pixel of label image, compare to class-colour code to determine
         class membership.
@@ -126,7 +127,7 @@ class MyImageProcessor(object):
 
 
 # noinspection PyShadowingNames
-class InputBuilder(Builder):
+class LabelledSampleInputBuilder(Builder):  # for labelled data samples
     #  """
     #  Portal of building input nodes of a computational graph.
     #
@@ -165,12 +166,14 @@ class InputBuilder(Builder):
     #  :return:
     #  """
     DEBUG_INFO = {
-        'raw_input': True,
+        'file_name':False,
+        'raw_input': False,
         'input_batch': True
     }
 
-    def __init__(self, conf, phrase):  # noinspection Shadowing
-        super(InputBuilder, self).__init__(conf, phrase)
+    def __init__(self, conf, data_split):  # noinspection Shadowing
+        super(LabelledSampleInputBuilder, self).__init__(conf)
+        assert data_split in ['training', 'validation']
         dc = conf['data']
         self.preproc = MyImageProcessor(jitter=dc['jitter'],
                                         image_info=dc['image_info'],
@@ -180,22 +183,23 @@ class InputBuilder(Builder):
         else:
             self.data_dir = os.path.join(conf['path']['base'], conf['path']['data'])
 
-        if phrase == 'train':
+        if data_split == 'training':
             lf = dc['trn_sample_list']
-        elif phrase == 'valid':
+            self.batch_size = conf['solver']['batch_size']
+        elif data_split == 'validation':
             lf = dc['vld_sample_list']
+            self.batch_size = None  # single-sample-batch, this will not be used
         else:
-            raise ValueError("Unknown phrase {}".format(phrase))
-        self.phrase = phrase
-        self.sample_list_file = \
-            os.path.join(self.data_dir, lf)
-
-        logging.info("Using samples from: {}".format(self.sample_list_file))
-
-        self.batch_size = conf['solver']['batch_size']
+            raise ValueError("Unknown phrase {}".format(data_split))
+        self.sample_list_file = os.path.join(self.data_dir, lf)
         self.random_seed = dc['random_seed']
+        self.data_split = data_split
+        logging.info("Using samples list \n\t{}\n for {}".format(self.sample_list_file, data_split))
 
-    def build(self, input_list):
+    # noinspection PyUnboundLocalVariable
+    def build(self, input_list, phrase):
+        assert phrase == 'train'  # these are samples with labels both
+        # 'training' and 'validation' belonging to train in broader sense
         assert len(input_list) == 0  # Input doesn't have input
         INFO = self.__class__.DEBUG_INFO
 
@@ -215,25 +219,35 @@ class InputBuilder(Builder):
 
         # 3. Image pre-process before making batches
         # TODO: if training we do jitter for augument, otherwise, skip
-        image, label = \
-            self.preproc.build_input_pair_process(raw_image, raw_label)
+        single_sample_batch = True
+        if self.data_split == 'training':
+            image, label = \
+                self.preproc.build_input_pair_process(raw_image, raw_label)
+            if self.preproc.is_shape_fixed():
+                # if pre-processor returns is_shape_fixed()==True, it is responsible for
+                # setting shapes of the trn_image and trn_label
+                image_batch, label_batch = \
+                    tf.train.batch([image, label],
+                                   batch_size=self.batch_size,
+                                   enqueue_many=True)
+                # enqueue_many: expect small "batches" from image preprocessing, because
+                #   data augument may result in multiple samples from one "raw sample"
+                single_sample_batch = False
+        else:  # no pre-processing for validation and deploy
+            image = raw_image
+            label = self.preproc.build_interpret_label(raw_label)
 
-        if self.preproc.is_shape_fixed():
-            # if pre-processor returns is_shape_fixed()==True, it is responsible for
-            # setting shapes of the trn_image and trn_label
-            image_batch, label_batch = \
-                tf.train.batch([image, label],
-                               batch_size=self.batch_size,
-                               enqueue_many=True)
-            # enqueue_many: expect small "batches" from image preprocessing, because
-            #   data augument may result in multiple samples from one "raw sample"
-        else:
-            image_batch = image
-            label_batch = label
+        if single_sample_batch:
+            image_batch = tf.expand_dims(image, 0)
+            label_batch = tf.expand_dims(label, 0)
 
+        assert isinstance(image_batch, tf.Tensor)
+        assert isinstance(label_batch, tf.Tensor)
         if INFO['input_batch']:
-            image_batch = build_print_shape(image_batch, "Train image batch shape: ")
-            label_batch = build_print_shape(label_batch, "Train label batch shape: ")
+            image_batch = build_print_shape(
+                image_batch, "Image batch [{}]: ".format(self.data_split))
+            label_batch = build_print_shape(
+                label_batch, "Label batch [{}]: ".format(self.data_split))
 
         return image_batch, label_batch
 
@@ -258,39 +272,53 @@ class InputBuilder(Builder):
         return im_files_t, lb_files_t, len(im_files)
 
     def build_pair_queue_reader(self, im_files, lb_files):
+        """
+        :param im_files: a list of file names of input images
+        :param lb_files: a list of file names of annotation (label) images
+        :return:
+        """
+        INFO = self.__class__.DEBUG_INFO
         input_queue = tf.train.slice_input_producer(
             [im_files, lb_files], num_epochs=None, shuffle=True,
             seed=self.random_seed,
             capacity=32
         )
+        im_file_name, lb_file_name = input_queue
+        if INFO['file_name']:
+            im_file_name = build_print_value(
+                im_file_name,"input image:", summarise=256, first_n = 999)
+            lb_file_name = build_print_value(
+                lb_file_name,"label image:", summarise=256, first_n = 999)
 
-        raw_image = tf.image.decode_png(tf.read_file(input_queue[0]),
+
+        raw_image = tf.image.decode_png(tf.read_file(im_file_name),
                                         channels=3,
                                         dtype=dtypes.uint8)
 
-        raw_label = tf.image.decode_png(tf.read_file(input_queue[1]),
+        raw_label = tf.image.decode_png(tf.read_file(lb_file_name),
                                         channels=3,
                                         dtype=dtypes.uint8)
         return raw_image, raw_label
 
 
 # noinspection PyShadowingNames
-class InputBuilderFactory(BuilderFactory):
+class LabelledSampleInputBuilderFactory(BuilderFactory):
     def __init__(self):
-        super(InputBuilderFactory, self).__init__()
+        super(LabelledSampleInputBuilderFactory, self).__init__()
 
-    def get_builder(self, conf, phrase):
-        return InputBuilder(conf, phrase)
+    def get_builder(self, conf, data_split):
+        return LabelledSampleInputBuilder(conf, data_split)
 
 
 if __name__ == '__main__':
     args = docopt(__doc__)
+
     with open(args['<config-file>'], 'r') as f:
         conf = json.load(f)
 
     if args['--project-dir']:
         conf['path']['base'] = args['<pdir>']
 
-    input_builder = InputBuilder(conf, 'train')
-    image_batch, label_batch = input_builder.build([])
+    input_builder = LabelledSampleInputBuilder(conf, data_split=args['--split'])
+    image_batch, label_batch = input_builder.build([], phrase='train')
     test_run([image_batch, label_batch], steps=3)

@@ -6,15 +6,17 @@ from experiment_manage.core import Builder, BuilderFactory
 
 
 class XentropyLossBuilder(Builder):
-    def __init__(self, conf, phrase):
-        super(XentropyLossBuilder, self).__init__(conf, phrase)
+    def __init__(self, conf):
+        super(XentropyLossBuilder, self).__init__(conf)
         self.class_weights = conf['objective']['class_weights']
         self.debug = conf['debug']
 
-    def build(self, inputs):
+    def build(self, inputs, phrase):
         """
         :param inputs: [pred_batch, label_batch]
+        :param phrase: train / infer
         """
+        assert phrase == 'train'  # infer shouldn't have access to labels
         pred_batch, label_batch = inputs
         sh = tf.shape(pred_batch)
         q = tf.reshape(pred_batch, (-1, sh[-1]))
@@ -36,8 +38,8 @@ class LossBuilderFactory(BuilderFactory):
     def __init__(self):
         super(LossBuilderFactory, self).__init__()
 
-    def get_builder(self, conf, phrase):
-        return XentropyLossBuilder(conf, phrase)
+    def get_builder(self, conf):
+        return XentropyLossBuilder(conf)
 
 
 def id_str():

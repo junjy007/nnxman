@@ -1,9 +1,10 @@
 import numpy as np
 import os
 import tensorflow as tf
+import logging
 from tensorflow.python.framework import dtypes
 from experiment_manage.util import build_print_shape  # test_run
-from experiment_manage.core import Builder, BuilderFactory
+from experiment_manage.core import Builder, BuilderFactory, DTYPE
 
 
 # noinspection PyPep8Naming
@@ -36,25 +37,15 @@ def index_group(N0, N1):
 
 # noinspection PyAttributeOutsideInit,PyMethodMayBeStatic,PyPep8Naming
 class FullConvNet_VGG16(Builder):
-    def __init__(self, conf, phrase):
+    def __init__(self, conf):
         """
         :param conf: experiment configure
             - encoder: options related to encoder network
             - solver: options related to training of the model, such as weight-decay
-        :param phrase:  ['train'|'deploy']
         """
-        super(FullConvNet_VGG16, self).__init__(conf, phrase)
+        super(FullConvNet_VGG16, self).__init__(conf)
         self.num_classes = conf['data']['num_classes']
         self.fc_shape_convert = conf['encoder']['fc_to_conv']
-        self.phrase = phrase
-        if self.phrase == 'train':
-            self.weight_decay_rate = conf['objective']['weight_decay']
-            self.dropout_rate = conf['solver']['dropout_rate']
-
-        self.vgg_params = self.load_pre_trained_vgg_weights(
-            filename=os.path.join(conf['path']['base'], conf['encoder']['pre_trained_param']),
-            channel_means=conf['encoder']['channel_means']
-        )
 
         self.debug = conf['debug']
         if self.debug['load_weights']:
@@ -63,9 +54,17 @@ class FullConvNet_VGG16(Builder):
                 print "\t{}:".format(k)
                 for wi, w in enumerate(self.vgg_params[k]):
                     print "\t\t[{}]: {}".format(wi, w.shape)
+        self.conf = conf
+
+        # phrase related
+        self.phrase = None
+        self.weight_decay_rate = 0.0
+        self.dropout_rate = 0.0
+        self.vgg_params = None
 
     @staticmethod
     def load_pre_trained_vgg_weights(filename, channel_means):
+        logging.debug("Load from {}".format(filename))
         vgg_params = np.load(filename).item()
         assert isinstance(vgg_params, dict)
         vgg_params['mean_r'] = channel_means['r']
@@ -73,12 +72,30 @@ class FullConvNet_VGG16(Builder):
         vgg_params['mean_b'] = channel_means['b']
         return vgg_params
 
-    def build(self, inputs):
+    def _get_tf_variable(self, **kwargs):
+        return tf.get_variable(dtype=DTYPE, trainable=(self.phrase == 'train'), **kwargs)
+
+    def build(self, inputs, phrase):
         """
         :param inputs, one-element list = [rgb_batch], which is a image batch
             tensor, [ None x height x width x num_channels ], The shape is
             how images are loaded.
+        :param phrase: train or infer
         """
+        self.phrase = phrase
+        if phrase == 'train':
+            self.weight_decay_rate = self.conf['objective']['weight_decay']
+            self.dropout_rate = self.conf['solver']['dropout_rate']
+
+        param_file = os.path.join(self.conf['path']['base'],
+                                  self.conf['encoder']['pre_trained_param'])
+        logging.debug("pm:{} / {} / {}".format(self.conf['path']['base'],self.conf['encoder']['pre_trained_param'], param_file))
+        self.vgg_params = self.load_pre_trained_vgg_weights(
+            filename=param_file,
+            channel_means=self.conf['encoder']['channel_means'])
+        logging.info("Based on pre-trained VGG (cold start)"
+                     "\n\t{}".format(param_file))
+
         rgb_batch = inputs[0]
         assert isinstance(rgb_batch, tf.Tensor)
         assert rgb_batch.get_shape().ndims == 4
@@ -123,10 +140,10 @@ class FullConvNet_VGG16(Builder):
                                   do_relu=True, debug=self.debug['fc'])
         if self.phrase == 'train':
             self.fc6 = tf.nn.dropout(self.fc6, self.dropout_rate)
+
         self.fc7 = self._fc_layer(self.fc6, "fc7",
                                   shape_convert=self.fc_shape_convert['fc7'],
                                   do_relu=True, debug=self.debug['fc'])
-
         if self.phrase == 'train':
             self.fc7 = tf.nn.dropout(self.fc7, self.dropout_rate)
 
@@ -181,17 +198,18 @@ class FullConvNet_VGG16(Builder):
             else:
                 stddev = random_weight_stddev
             init = tf.truncated_normal_initializer(stddev=stddev)
-            filt = tf.get_variable('weights', initializer=init,
-                                   shape=w_shape)
-            if not scope.reuse:
+            filt = self._get_tf_variable(
+                name='weights', initializer=init, shape=w_shape)
+            if self.phrase == 'train' and not scope.reuse:
                 # add to loss
                 wdl = tf.multiply(tf.nn.l2_loss(filt), self.weight_decay_rate)
                 tf.add_to_collection('losses', wdl)
 
             conv = tf.nn.conv2d(bottom, filt, [1, 1, 1, 1], padding='SAME')
 
-            bias = tf.get_variable('biases', shape=[num_classes],
-                                   initializer=tf.constant_initializer(0.0))
+            bias = self._get_tf_variable(
+                name='biases', shape=[num_classes],
+                initializer=tf.constant_initializer(0.0))
             top = tf.nn.bias_add(conv, bias)
 
         return top
@@ -319,7 +337,7 @@ class FullConvNet_VGG16(Builder):
             assert self.vgg_params[lname][0].shape == tuple(wshape)
         w = self.vgg_params[lname][0].reshape(kshape)
         init = tf.constant_initializer(value=w, dtype=tf.float32)
-        w_var = tf.get_variable(name='fc_wt', initializer=init, shape=kshape)
+        w_var = self._get_tf_variable(name='fc_wt', initializer=init, shape=kshape)
         if (not tf.get_variable_scope().reuse) and self.phrase == 'train':
             wd = tf.multiply(tf.nn.l2_loss(w_var),
                              self.weight_decay_rate,
@@ -347,7 +365,7 @@ class FullConvNet_VGG16(Builder):
         w_new = partial_reduce_mean(w, index_group(C0, num_classes))
         init = tf.constant_initializer(value=w_new, dtype=tf.float32)
         kshape_new = w_new.shape
-        w_var = tf.get_variable(name='fc_wt', initializer=init, shape=kshape_new)
+        w_var = self._get_tf_variable(name='fc_wt', initializer=init, shape=kshape_new)
 
         if (not tf.get_variable_scope().reuse) and self.phrase == 'train':
             wd = tf.multiply(tf.nn.l2_loss(w_var),
@@ -419,9 +437,9 @@ class FullConvNet_VGG16(Builder):
             f_val[:, :, i, i] = bilinear_interp[...]
         init = tf.constant_initializer(value=f_val,
                                        dtype=tf.float32)
-        return tf.get_variable(name='up_filter',
-                               initializer=init,
-                               shape=f_val.shape)
+        return self._get_tf_variable(name='up_filter',
+                                     initializer=init,
+                                     shape=f_val.shape)
 
     def reload_conv_filter(self, lname):
         """
@@ -439,9 +457,9 @@ class FullConvNet_VGG16(Builder):
 
         init = tf.constant_initializer(value=w, dtype=tf.float32)
 
-        w_var = tf.get_variable(name='conv_filter',
-                                initializer=init,
-                                shape=w.shape)
+        w_var = self._get_tf_variable(name='conv_filter',
+                                      initializer=init,
+                                      shape=w.shape)
 
         if (not tf.get_variable_scope().reuse) and self.phrase == 'train':
             # first time, put into weight decay
@@ -464,7 +482,7 @@ class FullConvNet_VGG16(Builder):
         """
         b = self.vgg_params[lname][1]
         init = tf.constant_initializer(value=b, dtype=tf.float32)
-        b_var = tf.get_variable(name='bias', initializer=init, shape=[b.size, ])
+        b_var = self._get_tf_variable(name='bias', initializer=init, shape=[b.size, ])
         return b_var
 
     def adapt_pred_bias(self, lname, num_classes):
@@ -498,9 +516,9 @@ class FullConvNet_VGG16(Builder):
         init = tf.constant_initializer(value=b_new, dtype=tf.float32)
         bshape_new = [num_classes, ]
 
-        b_var = tf.get_variable(name='bias',
-                                initializer=init,
-                                shape=bshape_new)
+        b_var = self._get_tf_variable(name='bias',
+                                      initializer=init,
+                                      shape=bshape_new)
         return b_var
 
 
@@ -517,8 +535,8 @@ class EncoderBuilderFactory(BuilderFactory):
     def __init__(self):
         super(EncoderBuilderFactory, self).__init__()
 
-    def get_builder(self, conf, phrase):
-        return FullConvNet_VGG16(conf, phrase)
+    def get_builder(self, conf):
+        return FullConvNet_VGG16(conf)
 
 
 def id_str():

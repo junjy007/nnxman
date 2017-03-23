@@ -3,3 +3,4 @@
 ref
 src_backup*
 *.pyc
+*tmp/

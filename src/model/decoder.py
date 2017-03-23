@@ -9,27 +9,32 @@ class DecoderBuilder(Builder):
     """
     A softmax decoder
     """
-    def __init__(self, conf, phrase):
-        super(DecoderBuilder, self).__init__(conf, phrase)
+    def __init__(self, conf):
+        super(DecoderBuilder, self).__init__(conf)
         self.decoded_batch = {}
-        self.phrase = phrase
 
-    def build(self, inputs):
+    def build(self, inputs, phrase):
         """
         :param inputs: list of inputs to decode.
             inputs[0]: the logits produced by the encoder
+        :param phrase: train / infer
         :return:
         """
+        assert phrase in ['train', 'infer']
         logits = inputs[0]
-        return [tf.nn.softmax(logits), ]
+
+        if phrase == 'train':
+            return [tf.nn.softmax(logits), ]
+        else:
+            return [tf.nn.softmax(logits), tf.arg_max(logits, dimension=3)]
 
 
 class DecoderBuilderFactory(BuilderFactory):
     def __init__(self):
         super(DecoderBuilderFactory, self).__init__()
 
-    def get_builder(self, conf, phrase):
-        return DecoderBuilder(conf, phrase)
+    def get_builder(self, conf):
+        return DecoderBuilder(conf)
 
 
 def id_str():

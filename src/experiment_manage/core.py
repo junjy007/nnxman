@@ -9,17 +9,20 @@ import imp
 import os
 import sys
 import logging
+import numpy as np
 import tensorflow as tf
-from util import get_experiment_running_dir
+from tensorflow.python.framework import dtypes
+from util import get_experiment_running_dir  #  build_print_shape
 
+
+DTYPE = dtypes.float32
 
 class Builder(object):
-    def __init__(self, conf, phrase):
+    def __init__(self, conf):
         self.conf = conf
-        assert phrase == 'train' or phrase == 'valid'
         return
 
-    def build(self, input_list):
+    def build(self, input_list, phrase):
         raise Exception("Builder is an interface")
 
 
@@ -31,7 +34,7 @@ class BuilderFactory(object):
     def __init__(self):
         return
 
-    def get_builder(self, conf, phrase):
+    def get_builder(self, conf):
         raise Exception("BuilderFactory is an interface")
 
 
@@ -66,6 +69,7 @@ class ModelFactory(object):
                      in ['data_source', 'encoder', 'decoder', 'loss', 'solver']}
         self.training_graph = {}
         self.inference_graph = {}
+        self.validation_graph = {}
         self.sess = {}
         self.log_settings = self.get_log_settings()
         self.setup_dirs()
@@ -74,7 +78,7 @@ class ModelFactory(object):
     def train(self):
         with tf.Graph().as_default():
             self.build_training_graph()
-            self.start_session('train')
+            self.start_training_session()
 
         self.run_training_steps(start_step=self.get_global_step(),
                                 end_step=self.conf['solver']['max_steps'])
@@ -82,48 +86,108 @@ class ModelFactory(object):
         self.sess['coord'].request_stop()
         self.sess['coord'].join(self.sess['threads'])
 
-    def evaluate(self):
-        print self.mods
-        print "- In a new graph"
-        print "- Build inference computations"
-        print ""
-        return
+    def evaluate(self, cp_path):
+        with tf.Graph().as_default():
+            # Get data feeder for cross-validation
+            self.build_validation_graph()
+            self.start_inference_session('valid', cp_path)
+
+        losses = self.run_evaluation()
+        self.sess['coord'].request_stop()
+        self.sess['coord'].join(self.sess['threads'])
+
+        xentropy_losses = [l_[0] for l_ in losses]
+        xentropy_losses_mean = np.mean(xentropy_losses)
+
+        return xentropy_losses, xentropy_losses_mean
 
     def build_training_graph(self):
-        input_builder_factory = self.mods['data_source'].InputBuilderFactory()
+        input_builder_factory = self.mods['data_source'].LabelledSampleInputBuilderFactory()
         assert isinstance(input_builder_factory, BuilderFactory)
-        input_builder = input_builder_factory.get_builder(self.conf, 'train')
+        # noinspection PyArgumentList
+        input_builder = input_builder_factory.get_builder(self.conf, 'training')
         assert isinstance(input_builder, Builder)
 
         encoder_builder_factory = self.mods['encoder'].EncoderBuilderFactory()
         assert isinstance(encoder_builder_factory, BuilderFactory)
-        encoder_builder = encoder_builder_factory.get_builder(self.conf, 'train')
+        encoder_builder = encoder_builder_factory.get_builder(self.conf)
         assert isinstance(encoder_builder, Builder)
 
         decoder_builder_factory = self.mods['decoder'].DecoderBuilderFactory()
         assert isinstance(decoder_builder_factory, BuilderFactory)
-        decoder_builder = decoder_builder_factory.get_builder(self.conf, 'train')
+        decoder_builder = decoder_builder_factory.get_builder(self.conf)
         assert isinstance(decoder_builder, Builder)
 
         loss_builder_factory = self.mods['loss'].LossBuilderFactory()
         assert isinstance(loss_builder_factory, BuilderFactory)
-        loss_builder = loss_builder_factory.get_builder(self.conf, 'train')
+        loss_builder = loss_builder_factory.get_builder(self.conf)
         assert isinstance(loss_builder, Builder)
 
         solver_builder_factory = self.mods['solver'].TrainBuilderFactory()
         assert isinstance(solver_builder_factory, BuilderFactory)
-        solver_builder = solver_builder_factory.get_builder(self.conf, 'train')
+        solver_builder = solver_builder_factory.get_builder(self.conf)
         assert isinstance(solver_builder, Builder)
 
-        images, labels = input_builder.build([])
-        logits = encoder_builder.build([images, ])[0]
-        class_probabilities = decoder_builder.build([logits, ])[0]
-        losses = loss_builder.build([class_probabilities, labels])[0]
-        train_op = solver_builder.build([losses, ])[0]
+        images, labels = input_builder.build([], 'train')
+        logits = encoder_builder.build([images, ], 'train')[0]
+        class_probabilities = decoder_builder.build([logits, ], 'train')[0]
+        losses = loss_builder.build([class_probabilities, labels], 'train')[0]
+        train_op = solver_builder.build([losses, ], 'train')[0]
 
-        self.training_graph['data_feeder'] = lambda: {}
-        self.training_graph['train_op'] = train_op
-        return
+        self.training_graph = {'data_feeder': lambda: {}, 'train_op': train_op}
+        return self.training_graph
+
+    def build_inference_graph(self, images):
+        """
+        Build a graph for forward computation only. It is to be used for deployment
+        or cross-validation.
+        :param images: placeholder of image data. [NxHxWxC]
+        :return:
+        """
+        encoder_builder_factory = self.mods['encoder'].EncoderBuilderFactory()
+        assert isinstance(encoder_builder_factory, BuilderFactory)
+        encoder_builder = encoder_builder_factory.get_builder(self.conf)
+        assert isinstance(encoder_builder, Builder)
+
+        decoder_builder_factory = self.mods['decoder'].DecoderBuilderFactory()
+        assert isinstance(decoder_builder_factory, BuilderFactory)
+        decoder_builder = decoder_builder_factory.get_builder(self.conf)
+        assert isinstance(decoder_builder, Builder)
+
+        logits = encoder_builder.build([images, ], 'infer')[0]
+        prob, pred = decoder_builder.build([logits, ], 'infer')
+
+        self.inference_graph = {'prob': prob, 'pred': pred}
+        return self.inference_graph
+
+    def build_validation_graph(self):
+        """
+        Build a graph for cross validation
+        :return:
+        """
+        input_builder_factory = self.mods['data_source'].LabelledSampleInputBuilderFactory()
+        assert isinstance(input_builder_factory, BuilderFactory)
+        # noinspection PyArgumentList
+        input_builder = input_builder_factory.get_builder(self.conf, 'validation')
+        assert isinstance(input_builder, Builder)
+
+        loss_builder_factory = self.mods['loss'].LossBuilderFactory()
+        assert isinstance(loss_builder_factory, BuilderFactory)
+        loss_builder = loss_builder_factory.get_builder(self.conf)
+        assert isinstance(loss_builder, Builder)
+
+        # phrase = train : for validation is part of train, with supervision
+        images, labels = input_builder.build([], 'train')
+        ig = self.build_inference_graph(images)  # ig has ['prob'] and ['pred']
+
+        # dbg = build_print_shape(ig['prob'], "pred-prob")
+        # dbg2 = build_print_shape(labels, "labels")
+
+        losses = loss_builder.build([ig['prob'], labels], 'train')
+
+        self.validation_graph = {'data_feeder': lambda: {},
+                                 'losses': losses}
+        return self.validation_graph
 
     def run_training_steps(self, start_step=0, end_step=999):
         """
@@ -134,7 +198,7 @@ class ModelFactory(object):
         saver = self.sess['saver']
         save_steps = self.log_settings['save_every_n_steps']
         summary_steps = self.log_settings['summary_every_n_steps']
-        save_path = self.log_settings['save_path']
+        save_path = self.log_settings['train_save_path']
         global_step = self.sess['global_step']
         global_step_inc = tf.assign_add(global_step, 1)
         summary_op = self.sess['summary_op']
@@ -154,35 +218,70 @@ class ModelFactory(object):
                 summary_writer.add_summary(summ_, global_step=self.get_global_step())
             print "Global step is now {}".format(self.get_global_step())
 
-    def start_session(self, phrase):
+    def run_evaluation(self):
+        # TODO: get evaluation data size and evaluation batch-size
+        # TODO: create an op, go through many validation batches and write summary
+        sess = self.sess['sess']
+        data_feeder = self.validation_graph['data_feeder']
+        assert isinstance(sess, tf.Session)
+        assert callable(data_feeder)
+        num_vsteps = 3  # TODO: use all samples per validation
+
+        losses = []
+        for t in range(num_vsteps):
+            losses.append(sess.run(self.validation_graph['losses'],
+                                   feed_dict=data_feeder()))
+
+        return losses
+
+    def start_training_session(self):
+        """
+        :return:
+        """
         cs = self.log_settings
         global_step = tf.Variable(0, name='global_step', trainable=False)
         summary_op = tf.summary.merge_all()
         saver = tf.train.Saver(
             max_to_keep=cs['max_to_keep'],
             keep_checkpoint_every_n_hours=cs['keep_every_n_hours'])
-
         sess = tf.Session()
-        if cs['load_path']:
-            saver.restore(sess, cs['load_path'])
-            logging.info("Resuming training from global step {}".format(
-                global_step.eval(sess)))
+        if cs['train_load_path']:
+            logging.info("Resume training from {}".format(cs['train_load_path']))
+            saver.restore(sess, cs['train_load_path'])
         else:
+            logging.info("Start training from scratch")
             sess.run(tf.global_variables_initializer())
-            assert phrase == 'train'
 
-        if phrase == 'train':
-            coord = tf.train.Coordinator()
-            threads = tf.train.start_queue_runners(sess=sess, coord=coord)
-            summary_dir = cs['train_summary_dir']
-        elif phrase == 'valid':
-            coord = None
-            threads = None
-            summary_dir = cs['valid_summary_dir']
-        else:
-            raise ValueError("Unexpected phrase {}".format(phrase))
+        coord = tf.train.Coordinator()
+        threads = tf.train.start_queue_runners(sess=sess, coord=coord)
+        summary_writer = tf.summary.FileWriter(logdir=cs['train_summary_dir'],
+                                               graph=sess.graph)
+        gs = global_step.eval(session=sess)
+        logging.info("global_step begin with {}".format(gs))
+        self.sess['sess'] = sess
+        self.sess['coord'] = coord
+        self.sess['threads'] = threads
+        self.sess['saver'] = saver
+        self.sess['global_step'] = global_step
+        self.sess['summary_op'] = summary_op
+        self.sess['summary_writer'] = summary_writer
+        return
+
+    def start_inference_session(self, phrase, model_checkpoint_path):
+        assert phrase in ['valid', 'deploy']
+        global_step = tf.Variable(0, name='global_step', trainable=False)
+        summary_op = tf.summary.merge_all()
+        saver = tf.train.Saver()
+        sess = tf.Session()
+        saver.restore(sess=sess, save_path=model_checkpoint_path)
+        coord = tf.train.Coordinator()
+        threads = tf.train.start_queue_runners(sess=sess, coord=coord)  # if no queue-runners
+        # have been constructed, threads will be empty, that's normal
+        summary_dir = self.log_settings[phrase + '_summary_dir']
         summary_writer = \
             tf.summary.FileWriter(logdir=summary_dir, graph=sess.graph)
+        gs = global_step.eval(session=sess)
+        logging.info("Load inference net with saved model {} trained {} steps".format(model_checkpoint_path, gs))
         self.sess['sess'] = sess
         self.sess['coord'] = coord
         self.sess['threads'] = threads
@@ -203,13 +302,14 @@ class ModelFactory(object):
         else:
             cp_load_path = None
 
-        cp = {'save_path': cp_save_path,
-              'load_path': cp_load_path}
+        cp = {'train_save_path': cp_save_path,
+              'train_load_path': cp_load_path}
         for k_ in ['max_to_keep', 'keep_every_n_hours', 'save_every_n_steps',
                    'summary_every_n_steps']:
             cp[k_] = self.conf['checkpoint'][k_]
-        for k_ in ['train_summary_dir', 'valid_summary_dir']:
-            cp[k_] = pj(self.run_dir, p[k_])
+        for k_ in ['train', 'valid', 'deploy']:
+            dk_ = k_ + '_summary_dir'
+            cp[dk_] = pj(self.run_dir, p[dk_])
         return cp
 
     def get_global_step(self):
@@ -220,9 +320,11 @@ class ModelFactory(object):
     def setup_dirs(self):
         needed_dirs = {
             'running': self.run_dir,
-            'checkpoint': os.path.dirname(self.log_settings['save_path']),
+            'checkpoint': os.path.dirname(self.log_settings['train_save_path']),
             'train-summary': self.log_settings['train_summary_dir'],
-            'valid-summary': self.log_settings['valid_summary_dir']
+            'valid-summary': self.log_settings['valid_summary_dir'],
+            'deploy-summary': self.log_settings['deploy_summary_dir'],
+            'tmp': os.path.join(self.run_dir, 'tmp')
         }
 
         for k, v in needed_dirs.iteritems():
