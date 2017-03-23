@@ -91,6 +91,7 @@
         "load_conv_weights": true,
         "load_conv_bias": true,
         "elem_loss": true,
-        "mean_loss": true
+        "mean_loss": true,
+        "total_loss": true
     }
 }

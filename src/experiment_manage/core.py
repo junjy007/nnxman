@@ -131,8 +131,8 @@ class ModelFactory(object):
         images, labels = input_builder.build([], 'train')
         logits = encoder_builder.build([images, ], 'train')[0]
         class_probabilities = decoder_builder.build([logits, ], 'train')[0]
-        losses = loss_builder.build([class_probabilities, labels], 'train')[0]
-        train_op = solver_builder.build([losses, ], 'train')[0]
+        total_loss = loss_builder.build([class_probabilities, labels], 'train')[0]
+        train_op = solver_builder.build([total_loss, ], 'train')[0]
 
         self.training_graph = {'data_feeder': lambda: {}, 'train_op': train_op}
         return self.training_graph
@@ -229,8 +229,10 @@ class ModelFactory(object):
 
         losses = []
         for t in range(num_vsteps):
-            losses.append(sess.run(self.validation_graph['losses'],
-                                   feed_dict=data_feeder()))
+            step_losses = sess.run(self.validation_graph['losses'],
+                                   feed_dict=data_feeder())
+            logging.debug("val-step-{}, losses: {}".format(t, step_losses))
+            losses.append(step_losses)
 
         return losses
 

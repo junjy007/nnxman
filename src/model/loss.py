@@ -30,8 +30,11 @@ class XentropyLossBuilder(Builder):
         if self.debug['mean_loss']:
             loss = build_print_value(loss, msg="mean loss", first_n=9999)
 
-        # TODO: include penalties such as weight decay
-        return [loss, ]
+        w_loss = tf.add_n(tf.get_collection('losses'), name='w_loss')
+        total_loss = loss + w_loss
+        if self.debug['total_loss']:
+            total_loss = build_print_value(total_loss, msg="total loss", first_n=9999)
+        return [total_loss, loss, ]
 
 
 class LossBuilderFactory(BuilderFactory):

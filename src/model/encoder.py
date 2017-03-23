@@ -84,9 +84,9 @@ class FullConvNet_VGG16(Builder):
         """
         self.phrase = phrase
         if phrase == 'train':
-            self.weight_decay_rate = self.conf['objective']['weight_decay']
             self.dropout_rate = self.conf['solver']['dropout_rate']
 
+        self.weight_decay_rate = self.conf['objective']['weight_decay']
         param_file = os.path.join(self.conf['path']['base'],
                                   self.conf['encoder']['pre_trained_param'])
         logging.debug("pm:{} / {} / {}".format(self.conf['path']['base'],self.conf['encoder']['pre_trained_param'], param_file))
@@ -200,7 +200,7 @@ class FullConvNet_VGG16(Builder):
             init = tf.truncated_normal_initializer(stddev=stddev)
             filt = self._get_tf_variable(
                 name='weights', initializer=init, shape=w_shape)
-            if self.phrase == 'train' and not scope.reuse:
+            if not scope.reuse:
                 # add to loss
                 wdl = tf.multiply(tf.nn.l2_loss(filt), self.weight_decay_rate)
                 tf.add_to_collection('losses', wdl)
@@ -338,7 +338,7 @@ class FullConvNet_VGG16(Builder):
         w = self.vgg_params[lname][0].reshape(kshape)
         init = tf.constant_initializer(value=w, dtype=tf.float32)
         w_var = self._get_tf_variable(name='fc_wt', initializer=init, shape=kshape)
-        if (not tf.get_variable_scope().reuse) and self.phrase == 'train':
+        if not tf.get_variable_scope().reuse:
             wd = tf.multiply(tf.nn.l2_loss(w_var),
                              self.weight_decay_rate,
                              name="weight_decay_loss")
@@ -367,7 +367,7 @@ class FullConvNet_VGG16(Builder):
         kshape_new = w_new.shape
         w_var = self._get_tf_variable(name='fc_wt', initializer=init, shape=kshape_new)
 
-        if (not tf.get_variable_scope().reuse) and self.phrase == 'train':
+        if not tf.get_variable_scope().reuse:
             wd = tf.multiply(tf.nn.l2_loss(w_var),
                              self.weight_decay_rate,
                              name="weight_decay_loss")
@@ -461,7 +461,7 @@ class FullConvNet_VGG16(Builder):
                                       initializer=init,
                                       shape=w.shape)
 
-        if (not tf.get_variable_scope().reuse) and self.phrase == 'train':
+        if not tf.get_variable_scope().reuse:
             # first time, put into weight decay
             wd = tf.multiply(tf.nn.l2_loss(w_var),
                              self.weight_decay_rate,
