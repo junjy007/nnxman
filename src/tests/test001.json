@@ -1,0 +1,42 @@
+{
+    "version": {
+        "id": "UnitTest_LoadData",
+        "parent": "",
+        "running_copy": false
+    },
+    "path": {
+        "host": "MacBook",
+        "base": "/Users/junli/local/projects/tf-fcn",
+        "data": "DATA/data_road_sml",
+        "run": "RUNS",
+        "this_experiment": "tmp"
+    },
+    "data": {
+        "all_sample_list": "",
+        "trn_sample_list": "train.txt",
+        "vld_sample_list": "valid.txt",
+        "image_info": {
+            "height": 375,
+            "width": 1242,
+            "channels": 3,
+            "format": "png"
+        },
+        "num_classes": 2,
+        "class_colours": {
+            "road": [ 255, 0, 255 ],
+            "background": [ 255, 0, 0 ]
+        },
+        "jitter": {
+            "trn_im_height": 300,
+            "trn_im_width": 600,
+            "random_resize": true,
+            "random_resize_factor_min": 0.9,
+            "random_resize_factor_max": 1.2,
+            "random_crop": true
+        },
+        "random_seed": 42
+    },
+    "solver": {
+        "batch_size": 2
+    }
+}

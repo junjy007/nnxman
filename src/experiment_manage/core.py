@@ -12,10 +12,10 @@ import logging
 import numpy as np
 import tensorflow as tf
 from tensorflow.python.framework import dtypes
-from util import get_experiment_running_dir  #  build_print_shape
-
+from util import get_experiment_running_dir  # build_print_shape
 
 DTYPE = dtypes.float32
+
 
 class Builder(object):
     def __init__(self, conf):
