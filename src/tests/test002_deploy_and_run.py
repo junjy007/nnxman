@@ -7,20 +7,23 @@ import shutil
 import unittest
 import json
 import sys
-from multiprocessing import Process
-sys.path.insert(0, '..')
 import tensorflow as tf
-from tensorflow.python.framework import dtypes, ops
-import numpy as np
 import logging
-from scipy.misc import imsave
-import setup_test as sett
-import train_and_evaluate as tv
 from subprocess import Popen, PIPE
+
+sys.path.insert(0, '..')
+# noinspection PyPep8
+import setup_test as sett
+
+#  import numpy as np
+#  from scipy.misc import imsave
+#  from tensorflow.python.framework import dtypes, ops
+#  import train_and_evaluate as tv
 
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(levelname)s %(funcName)s: %(message)s')
+
 
 class InputTests(unittest.TestCase):
     def setUp(self):
@@ -41,19 +44,23 @@ class InputTests(unittest.TestCase):
         tf.reset_default_graph()
 
     def test_start_train(self):
-        #cmd = r'python {}/src/train_and_evaluate.py --no-validation test_config_000.json'.format(self.tdir)
+        # cmd = r'python {}/src/train_and_evaluate.py --no-validation test_config_000.json'.format(self.tdir)
         cwd = r'{}/src'.format(self.tdir)
-        #subp = Popen(['python', 'train_and_evaluate.py'], env=os.environ.copy(), cwd=cwd, stderr=PIPE, stdout=PIPE)
-        subp = Popen(['python', 'train_and_evaluate.py', 'config_000.json', '--no-validation'],
+        # subp = Popen(['python', 'train_and_evaluate.py'], env=os.environ.copy(), cwd=cwd, stderr=PIPE, stdout=PIPE)
+        subp = Popen(['python', 'train_and_evaluate.py', 'config_000.json'],  # '--no-validation'],
                      env=os.environ.copy(), cwd=cwd, stderr=PIPE, stdout=PIPE)
         stdo_msg, stde_msg = subp.communicate()
         print stdo_msg
         print stde_msg
-        # wait, then check first checkpoint
+        trn_succ_msg = "Training was completed successfully"
+        val_succ_msg = "Validation was completed successfully"
+        self.failUnless(trn_succ_msg in stdo_msg or trn_succ_msg in stde_msg)
+        self.failUnless(val_succ_msg in stdo_msg or val_succ_msg in stde_msg)
 
 
 def main():
     unittest.main()
+
 
 if __name__ == '__main__':
     main()

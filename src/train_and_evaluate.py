@@ -60,12 +60,14 @@ def validation_d(conf, q):
                 one_more = True
         except:
             pass
+    logging.info("Validation was completed successfully")
 
 
 def train(conf, q):
     md = ModelFactory(conf)
     md.train()
     q.put(TRAINING_COMPLETE_MSG)
+    logging.info("Training was completed successfully.")
 
 
 def main(config_file, do_training, do_validation):
