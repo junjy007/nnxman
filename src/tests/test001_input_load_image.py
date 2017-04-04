@@ -9,7 +9,7 @@ import sys
 sys.path.insert(0, '..')
 import model.input as inp
 import tensorflow as tf
-from tensorflow.python.framework import dtypes, ops
+from tensorflow.python.framework import ops
 import numpy as np
 import logging
 from scipy.misc import imsave
