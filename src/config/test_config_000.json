@@ -42,7 +42,7 @@
         },
         "jitter":{
             "trn_im_height": 300,
-            "trn_im_width": 600,
+            "trn_im_width": 800,
             "random_resize": true,
             "random_resize_factor_min": 0.9,
             "random_resize_factor_max": 1.2,
@@ -87,7 +87,8 @@
         "max_to_keep": 5,
         "keep_every_n_hours": 12,
         "save_every_n_steps": 1,
-        "summary_every_n_steps": 1
+        "summary_every_n_steps": 1,
+        "visualise_every_n_steps": 1
     },
     "debug": {
         "load_weights": false,

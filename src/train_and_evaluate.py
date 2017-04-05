@@ -35,7 +35,12 @@ def validation_d(conf, q):
     # noinspection PyShadowingNames
     def evaluate_checkpoint(conf, cp_path, rec_func):
         md = ModelFactory(conf)
-        loss = md.evaluate(cp_path)[1]
+        visualise_image_save_dir = os.path.splitext(cp_path)[0] \
+                                   + '.visualise_validation'
+        logging.info("cp-path:{}\n"
+                     "visualisation dir: {}".format(cp_path, visualise_image_save_dir))
+        loss = md.evaluate(cp_path = cp_path,
+                           visimg_savedir=visualise_image_save_dir)[1] # mean-cross entropy
         rec_func(cp_path, loss)
 
     run_dir = get_experiment_running_dir(conf['path'], conf['version']['id'])
@@ -46,7 +51,6 @@ def validation_d(conf, q):
     one_more = False
     while True:
         for p in eval_record.get_to_eval_checkpoint_paths():
-            print "DEBUG DUMMY "
             logging.info("Evaluate checkpoint {}".format(p))
             evaluate_checkpoint(conf, cp_path=p,
                                 rec_func=eval_record.record_checkpoint_eval_result)
@@ -56,17 +60,19 @@ def validation_d(conf, q):
         try:
             msg = q.get(timeout=120)
             if msg == TRAINING_COMPLETE_MSG:
-                logging.info("Training is complete, check saved model to eval once more")
+                logging.info("Training was completed successfully. "
+                             "Check saved model to eval once more.")
                 one_more = True
         except:
             pass
     logging.info("Validation was completed successfully")
 
 
-def train(conf, q):
+def train(conf, q=None):
     md = ModelFactory(conf)
     md.train()
-    q.put(TRAINING_COMPLETE_MSG)
+    if q:
+        q.put(TRAINING_COMPLETE_MSG)
     logging.info("Training was completed successfully.")
 
 

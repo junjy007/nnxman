@@ -10,9 +10,10 @@ import os
 import sys
 import logging
 import numpy as np
+from scipy.misc import imsave
 import tensorflow as tf
 from tensorflow.python.framework import dtypes
-from util import get_experiment_running_dir  # build_print_shape
+from util import get_experiment_running_dir, visualise_image_segment_result  # build_print_shape
 
 DTYPE = dtypes.float32
 
@@ -40,6 +41,14 @@ class BuilderFactory(object):
 
 # noinspection,SpellCheckingInspection
 class ModelFactory(object):
+    """
+    This object can
+    - build model according to specified components
+    - train the model fitting to data (start/continue training)
+    - provide valuation tool to check the performance of the model
+      for cross-validation data
+    """
+    # TODO: separate visualisation (model dependent) from framework.
     def __init__(self, conf):
         self.conf = conf
 
@@ -60,6 +69,7 @@ class ModelFactory(object):
                 sys.path.insert(1, d_)
             else:
                 sys.path.insert(1, os.path.join(src_base, d_))
+        self.class_colours = None
 
         def load_mod(mod_name):
             mod_file = os.path.join(src_base, conf['model'][mod_name])
@@ -86,13 +96,13 @@ class ModelFactory(object):
         self.sess['coord'].request_stop()
         self.sess['coord'].join(self.sess['threads'])
 
-    def evaluate(self, cp_path):
+    def evaluate(self, cp_path, visimg_savedir=None, max_visualise_batches=3):
         with tf.Graph().as_default():
             # Get data feeder for cross-validation
             self.build_validation_graph()
             self.start_inference_session('valid', cp_path)
 
-        losses = self.run_evaluation()
+        losses = self.run_evaluation(visimg_savedir, max_visualise_batches)
         self.sess['coord'].request_stop()
         self.sess['coord'].join(self.sess['threads'])
 
@@ -130,11 +140,19 @@ class ModelFactory(object):
 
         images, labels = input_builder.build([], 'train')
         logits = encoder_builder.build([images, ], 'train')[0]
-        class_probabilities = decoder_builder.build([logits, ], 'train')[0]
+        class_probabilities, class_predictions = \
+            decoder_builder.build([logits, ], 'train')
         total_loss = loss_builder.build([class_probabilities, labels], 'train')[0]
         train_op = solver_builder.build([total_loss, ], 'train')[0]
 
-        self.training_graph = {'data_feeder': lambda: {}, 'train_op': train_op}
+        # noinspection PyUnresolvedReferences
+        self.class_colours = input_builder.get_class_colours()
+        self.training_graph = {'data_feeder': lambda: {},
+                               'train_op': train_op,
+                               'prob': class_probabilities,
+                               'pred': class_predictions,
+                               'images': images,
+                               'labels': labels}
         return self.training_graph
 
     def build_inference_graph(self, images):
@@ -185,16 +203,57 @@ class ModelFactory(object):
 
         losses = loss_builder.build([ig['prob'], labels], 'train')
 
+        # noinspection PyUnresolvedReferences
+        self.class_colours = input_builder.get_class_colours()
         self.validation_graph = {'data_feeder': lambda: {},
-                                 'losses': losses}
+                                 'losses': losses,
+                                 'prob': ig['prob'],
+                                 'pred': ig['pred'],
+                                 'images': images,
+                                 'labels': labels}
         return self.validation_graph
 
-    def run_training_steps(self, start_step=0, end_step=999):
+    def _visualise_batch_and_save(self, ims, lbs, probs, preds, sav_dir, fname_prefix=''):
+        assert not(self.class_colours is None)
+        if not os.path.exists(sav_dir):
+            os.makedirs(sav_dir)
+
+        batch_size = ims.shape[0]
+        for j in range(batch_size):
+            overim_gt, overim_pb, overim_y = visualise_image_segment_result(
+                im=ims[j], gt=lbs[j], pb=probs[j], y=preds[j],
+                class_colours=self.class_colours)
+
+            for k_, ovim_ in zip(['gt', 'pb', 'y'], [overim_gt, overim_pb, overim_y]):
+                fn_ = os.path.join(sav_dir,
+                                   '{}sample_{}_overlay_image_and_{}.png'.format(fname_prefix, j, k_))
+                imsave(fn_, ovim_)
+
+
+    def _run_training_op_and_visualise(self, t):
         """
+        When we call feed forward data will be fetch out of the queue, so we cannot "re-forward" the
+         input image to visualise the results after running training OP. On the other hand, if we
+         extract all data/label/prediction, etc. for visualisation in each step, we may incur large
+         amount of CPU/GPU data exchange. So we run different OP's according to the need of visualisation.
+        :return:
         """
         sess = self.sess['sess']
-        train_op = self.training_graph['train_op']
         data_feeder = self.training_graph['data_feeder']
+        save_path = self.log_settings['train_save_path']
+        assert callable(data_feeder)
+        assert isinstance(sess, tf.Session)
+        visualise_ops = [self.training_graph[op_k]
+                         for op_k in ['train_op', 'images', 'labels', 'prob', 'pred']]
+        if (t + 1) % self.log_settings['visualise_every_n_steps'] == 0:
+            _, ims, lbs, probs, preds = sess.run(visualise_ops, feed_dict=data_feeder())
+            visualise_image_dir = '{}-{}.visualise_training'.format(save_path, t + 1)
+            self._visualise_batch_and_save(ims, lbs, probs, preds, sav_dir=visualise_image_dir)
+        else:
+            sess.run(self.training_graph['train_op'])
+
+    def run_training_steps(self, start_step=0, end_step=999):
+        sess = self.sess['sess']
         saver = self.sess['saver']
         save_steps = self.log_settings['save_every_n_steps']
         summary_steps = self.log_settings['summary_every_n_steps']
@@ -204,21 +263,33 @@ class ModelFactory(object):
         summary_op = self.sess['summary_op']
         summary_writer = self.sess['summary_writer']
         assert isinstance(sess, tf.Session)
-        assert callable(data_feeder)
         assert isinstance(saver, tf.train.Saver)
         assert isinstance(summary_writer, tf.summary.FileWriter)
 
         for t in xrange(start_step, end_step):
-            sess.run(train_op, feed_dict=data_feeder())
+            self._run_training_op_and_visualise(t)
             sess.run(global_step_inc)
             if (t + 1) % save_steps == 0:
                 saver.save(sess, save_path=save_path, global_step=global_step)
             if (t + 1) % summary_steps == 0:
                 summ_ = sess.run(summary_op)
                 summary_writer.add_summary(summ_, global_step=self.get_global_step())
+
             print "Global step is now {}".format(self.get_global_step())
 
-    def run_evaluation(self):
+    def _run_evaluation_op_and_visualise(self, visimg_savedir, fname_prefix=''):
+        sess = self.sess['sess']
+        data_feeder = self.validation_graph['data_feeder']
+        assert isinstance(sess, tf.Session)
+        assert callable(data_feeder)
+        visualise_ops = [self.validation_graph[op_k]
+                         for op_k in ['losses', 'images', 'labels', 'prob', 'pred']]
+        step_losses, ims, lbs, probs, preds = sess.run(visualise_ops, feed_dict=data_feeder())
+        self._visualise_batch_and_save(ims, lbs, probs, preds, sav_dir=visimg_savedir,
+                                       fname_prefix=fname_prefix)
+        return step_losses
+
+    def run_evaluation(self, visimg_savedir, max_visualise_batches):
         # TODO: get evaluation data size and evaluation batch-size
         # TODO: create an op, go through many validation batches and write summary
         sess = self.sess['sess']
@@ -229,8 +300,16 @@ class ModelFactory(object):
 
         losses = []
         for t in range(num_vsteps):
-            step_losses = sess.run(self.validation_graph['losses'],
-                                   feed_dict=data_feeder())
+            if visimg_savedir is None:
+                step_losses = sess.run(self.validation_graph['losses'],
+                                       feed_dict=data_feeder())
+            else:
+                if t < max_visualise_batches:
+                    batch_prefix = 'batch_{}_'.format(t)
+                    step_losses = self._run_evaluation_op_and_visualise(
+                        visimg_savedir,
+                        fname_prefix=batch_prefix)
+
             logging.debug("val-step-{}, losses: {}".format(t, step_losses))
             losses.append(step_losses)
 
@@ -275,6 +354,7 @@ class ModelFactory(object):
         summary_op = tf.summary.merge_all()
         saver = tf.train.Saver()
         sess = tf.Session()
+        logging.info("Load cp:{}".format(model_checkpoint_path))
         saver.restore(sess=sess, save_path=model_checkpoint_path)
         coord = tf.train.Coordinator()
         threads = tf.train.start_queue_runners(sess=sess, coord=coord)  # if no queue-runners
@@ -307,7 +387,7 @@ class ModelFactory(object):
         cp = {'train_save_path': cp_save_path,
               'train_load_path': cp_load_path}
         for k_ in ['max_to_keep', 'keep_every_n_hours', 'save_every_n_steps',
-                   'summary_every_n_steps']:
+                   'summary_every_n_steps', 'visualise_every_n_steps']:
             cp[k_] = self.conf['checkpoint'][k_]
         for k_ in ['train', 'valid', 'deploy']:
             dk_ = k_ + '_summary_dir'

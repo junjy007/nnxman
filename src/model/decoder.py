@@ -23,10 +23,7 @@ class DecoderBuilder(Builder):
         assert phrase in ['train', 'infer']
         logits = inputs[0]
 
-        if phrase == 'train':
-            return [tf.nn.softmax(logits), ]
-        else:
-            return [tf.nn.softmax(logits), tf.arg_max(logits, dimension=3)]
+        return [tf.nn.softmax(logits), tf.arg_max(logits, dimension=3)]
 
 
 class DecoderBuilderFactory(BuilderFactory):

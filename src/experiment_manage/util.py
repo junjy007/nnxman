@@ -6,6 +6,20 @@ import numpy as np
 import logging
 import matplotlib.cm as cm
 
+# ==== DATA-PROC ====
+def class_idx_to_onehot(y, num_classes=None):
+    # type: (np.ndarray, int) -> np.ndarray
+    """
+    Given a tensor of y, each entry, an integer, corresponding to a class,
+    output y_code, y_code has y.dimension + 1, the last dimension has length
+    of #.classes, where y_code[..., j] == 1 <-> y[...] == j
+    :param y:
+    :return:
+    """
+    if num_classes is None:
+        num_classes = y.max() + 1
+    y_code = np.stack((y==c for c in range(num_classes)), axis=y.ndim)
+    return y_code
 
 # ==== TENSORFLOW ====
 
@@ -325,3 +339,32 @@ def overlay_image_with_class_colours(im, pb, class_colours=None,
     im1 = im1 * a + over_image * (1 - a)
 
     return im1.astype(np.uint8)
+
+
+def visualise_image_segment_result(im, gt, pb, y, class_colours=None, a=0.4):
+    """
+    Utility to facilitate examine model. Given model prediction of class
+    probabilities and class membership (argmax), overlay the image with
+    colour-codes of the classes.
+    :param im: RGB input image
+    :param gt: ground truth label
+    :param pb: predicted probability
+    :param y: predicted class labels
+    :param class_colours:
+    :param a:
+    :return: image overlain by: i) ground truth label
+        ii) predicted probability
+        iii) predicted label
+    """
+    num_classes = pb.shape[2]
+    if not (class_colours is None):
+        assert len(class_colours) == num_classes
+
+    # y to one-hot
+    y_code = class_idx_to_onehot(y, num_classes)
+
+    gt_im = overlay_image_with_class_colours(im, gt, class_colours, a)
+    pb_im = overlay_image_with_class_colours(im, pb, class_colours, a)
+    py_im = overlay_image_with_class_colours(im, y_code, class_colours, a)
+
+    return gt_im, pb_im, py_im
